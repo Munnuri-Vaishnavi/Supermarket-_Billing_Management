@@ -10,7 +10,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 public class BillingService {
@@ -19,7 +18,6 @@ public class BillingService {
     private final ProductRepository productRepository;
     private final CustomerRepository customerRepository;
 
-    private static final AtomicInteger BILL_COUNTER = new AtomicInteger(1000);
     private static final Map<String, Double> COUPON_CODES = new HashMap<>();
 
     static {
@@ -49,8 +47,8 @@ public class BillingService {
 
     @Transactional
     public Bill generateBill(BillRequest request) {
-        if (request.getItems() == null || request.getItems().isEmpty()) {
-            throw new IllegalArgumentException("Cannot generate bill with empty cart items.");
+        if (request == null || request.getItems() == null || request.getItems().isEmpty()) {
+            throw new IllegalArgumentException("Cannot generate bill: Cart is empty.");
         }
 
         // 1. Calculate subtotal using Java Stream API
@@ -76,16 +74,29 @@ public class BillingService {
         double taxAmount = Math.round((taxableAmount * (taxRate / 100.0)) * 100.0) / 100.0;
         double grandTotal = Math.round((taxableAmount + taxAmount) * 100.0) / 100.0;
 
-        // 4. Generate unique bill number
+        // 4. Generate guaranteed unique bill number (Date + Unique Sequence)
         String dateStr = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-        String billNumber = "SB-" + dateStr + "-" + BILL_COUNTER.incrementAndGet();
+        long randomSuffix = (System.currentTimeMillis() % 90000) + 10000;
+        String billNumber = "SB-" + dateStr + "-" + randomSuffix;
+
+        // Ensure collision safety
+        while (billRepository.findByBillNumber(billNumber).isPresent()) {
+            randomSuffix++;
+            billNumber = "SB-" + dateStr + "-" + randomSuffix;
+        }
 
         // 5. Create Bill Entity
         Bill bill = new Bill();
         bill.setBillNumber(billNumber);
         bill.setDateTime(LocalDateTime.now());
-        bill.setCustomerName(request.getCustomerName() != null && !request.getCustomerName().trim().isEmpty() ? request.getCustomerName().trim() : "Walk-in Customer");
-        bill.setCustomerPhone(request.getCustomerPhone() != null ? request.getCustomerPhone().trim() : "N/A");
+        
+        String custName = (request.getCustomerName() != null && !request.getCustomerName().trim().isEmpty())
+                ? request.getCustomerName().trim() : "Walk-in Customer";
+        String custPhone = (request.getCustomerPhone() != null && !request.getCustomerPhone().trim().isEmpty())
+                ? request.getCustomerPhone().trim() : "N/A";
+
+        bill.setCustomerName(custName);
+        bill.setCustomerPhone(custPhone);
         bill.setPaymentMethod(request.getPaymentMethod() != null ? request.getPaymentMethod().toUpperCase() : "CASH");
         bill.setSubtotal(subtotal);
         bill.setTaxRate(taxRate);
@@ -98,10 +109,10 @@ public class BillingService {
         // 6. Deduct stock and attach BillItems
         for (CartItem cartItem : request.getItems()) {
             Product product = productRepository.findById(cartItem.getProductId())
-                    .orElseThrow(() -> new IllegalArgumentException("Product not found: ID " + cartItem.getProductId()));
+                    .orElseThrow(() -> new IllegalArgumentException("Product not found with ID: " + cartItem.getProductId()));
 
             if (product.getStockQuantity() < cartItem.getQuantity()) {
-                throw new IllegalStateException("Insufficient stock for: " + product.getName() + " (Requested: " + cartItem.getQuantity() + ", In Stock: " + product.getStockQuantity() + ")");
+                throw new IllegalStateException("Insufficient stock for: " + product.getName() + " (Available: " + product.getStockQuantity() + ", Requested: " + cartItem.getQuantity() + ")");
             }
 
             // Deduct stock
@@ -113,36 +124,44 @@ public class BillingService {
                     product.getId(),
                     product.getBarcode(),
                     product.getName(),
-                    product.getCategory().getDisplayName(),
+                    product.getCategory() != null ? product.getCategory().getDisplayName() : "General",
                     cartItem.getQuantity(),
                     cartItem.getUnitPrice()
             );
             bill.addItem(item);
         }
 
-        // 7. Update or Create Customer loyalty points
-        if (request.getCustomerPhone() != null && request.getCustomerPhone().matches("\\d{10}")) {
-            Customer customer = customerRepository.findByPhoneNumber(request.getCustomerPhone())
-                    .orElseGet(() -> {
-                        Customer newCustomer = new Customer();
-                        newCustomer.setName(bill.getCustomerName());
-                        newCustomer.setPhoneNumber(bill.getCustomerPhone());
-                        return newCustomer;
-                    });
+        // 7. Update or Create Customer loyalty points safely
+        if (request.getCustomerPhone() != null) {
+            String digitsOnly = request.getCustomerPhone().replaceAll("[^0-9]", "");
+            if (digitsOnly.length() >= 10) {
+                try {
+                    Customer customer = customerRepository.findByPhoneNumber(digitsOnly)
+                            .orElseGet(() -> {
+                                Customer newCustomer = new Customer();
+                                newCustomer.setName(custName);
+                                newCustomer.setPhoneNumber(digitsOnly);
+                                return newCustomer;
+                            });
 
-            // 1 loyalty point per 50 currency units spent
-            int pointsEarned = (int) (grandTotal / 50.0);
-            customer.setLoyaltyPoints(customer.getLoyaltyPoints() + pointsEarned);
+                    // 1 loyalty point per 50 currency units spent
+                    int pointsEarned = (int) (grandTotal / 50.0);
+                    customer.setLoyaltyPoints(customer.getLoyaltyPoints() + pointsEarned);
 
-            // Update tier based on points
-            if (customer.getLoyaltyPoints() >= 100) {
-                customer.setMembershipTier("PLATINUM");
-            } else if (customer.getLoyaltyPoints() >= 50) {
-                customer.setMembershipTier("GOLD");
-            } else {
-                customer.setMembershipTier("SILVER");
+                    // Update tier based on points
+                    if (customer.getLoyaltyPoints() >= 100) {
+                        customer.setMembershipTier("PLATINUM");
+                    } else if (customer.getLoyaltyPoints() >= 50) {
+                        customer.setMembershipTier("GOLD");
+                    } else {
+                        customer.setMembershipTier("SILVER");
+                    }
+                    customerRepository.save(customer);
+                } catch (Exception e) {
+                    // Non-fatal: loyalty update failure should not fail checkout
+                    System.err.println("Notice: Could not update customer loyalty points: " + e.getMessage());
+                }
             }
-            customerRepository.save(customer);
         }
 
         return billRepository.save(bill);
@@ -157,4 +176,3 @@ public class BillingService {
         return coupons;
     }
 }
-

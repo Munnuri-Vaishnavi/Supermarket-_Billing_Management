@@ -28,6 +28,7 @@ public class BillingController {
         } catch (IllegalArgumentException | IllegalStateException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         } catch (Exception e) {
+            e.printStackTrace();
             return ResponseEntity.internalServerError().body(Map.of("error", "Failed to generate bill: " + e.getMessage()));
         }
     }
@@ -56,4 +57,3 @@ public class BillingController {
         return billingService.getAvailableCoupons();
     }
 }
-

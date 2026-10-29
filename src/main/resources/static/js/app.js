@@ -451,41 +451,61 @@ async function submitCheckout() {
 }
 
 function displayReceiptModal(bill) {
-    document.getElementById('rBillNo').textContent = bill.billNumber;
-    document.getElementById('rDateTime').textContent = new Date(bill.dateTime || Date.now()).toLocaleString();
+    if (!bill) return;
+
+    document.getElementById('rBillNo').textContent = bill.billNumber || 'SB-0000';
+    
+    let dateStr = new Date().toLocaleString();
+    try {
+        if (bill.dateTime) {
+            const raw = typeof bill.dateTime === 'string' ? bill.dateTime.split('.')[0] : bill.dateTime;
+            dateStr = new Date(raw).toLocaleString();
+        }
+    } catch (e) {}
+    document.getElementById('rDateTime').textContent = dateStr;
+
     document.getElementById('rCustName').textContent = bill.customerName || 'Walk-in Shopper';
     document.getElementById('rCustPhone').textContent = bill.customerPhone || 'N/A';
     document.getElementById('rPayMode').textContent = bill.paymentMethod || 'CASH';
 
     // Itemized lines
     const itemsContainer = document.getElementById('rItemsList');
-    itemsContainer.innerHTML = (bill.items || []).map(item => `
-        <div class="r-row" style="margin-bottom: 3px;">
-            <span style="flex: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${item.productName}</span>
-            <span style="flex: 1; text-align: center;">${item.quantity} x $${item.unitPrice.toFixed(2)}</span>
-            <span style="flex: 1; text-align: right;">$${item.totalPrice.toFixed(2)}</span>
-        </div>
-    `).join('');
-
-    document.getElementById('rSubtotal').textContent = `$${bill.subtotal.toFixed(2)}`;
-    
-    const rDiscountRow = document.getElementById('rDiscountRow');
-    if (bill.discountAmount && bill.discountAmount > 0) {
-        rDiscountRow.style.display = 'flex';
-        document.getElementById('rDiscount').textContent = `-$${bill.discountAmount.toFixed(2)} (${bill.couponCode || 'Promo'})`;
-    } else {
-        rDiscountRow.style.display = 'none';
+    if (itemsContainer) {
+        itemsContainer.innerHTML = (bill.items || []).map(item => `
+            <div class="r-row" style="margin-bottom: 3px;">
+                <span style="flex: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${item.productName || 'Item'}</span>
+                <span style="flex: 1; text-align: center;">${item.quantity || 1} x $${(item.unitPrice || 0).toFixed(2)}</span>
+                <span style="flex: 1; text-align: right;">$${(item.totalPrice || 0).toFixed(2)}</span>
+            </div>
+        `).join('');
     }
 
-    const halfTax = (bill.taxAmount || 0) / 2.0;
+    const sub = bill.subtotal || 0;
+    document.getElementById('rSubtotal').textContent = `$${sub.toFixed(2)}`;
+    
+    const rDiscountRow = document.getElementById('rDiscountRow');
+    if (rDiscountRow) {
+        if (bill.discountAmount && bill.discountAmount > 0) {
+            rDiscountRow.style.display = 'flex';
+            document.getElementById('rDiscount').textContent = `-$${bill.discountAmount.toFixed(2)} (${bill.couponCode || 'Promo'})`;
+        } else {
+            rDiscountRow.style.display = 'none';
+        }
+    }
+
+    const taxVal = bill.taxAmount || 0;
+    const halfTax = taxVal / 2.0;
     document.getElementById('rCGST').textContent = `$${halfTax.toFixed(2)}`;
     document.getElementById('rSGST').textContent = `$${halfTax.toFixed(2)}`;
-    document.getElementById('rGrandTotal').textContent = `$${bill.grandTotal.toFixed(2)}`;
+    
+    const totalVal = bill.grandTotal || 0;
+    document.getElementById('rGrandTotal').textContent = `$${totalVal.toFixed(2)}`;
 
-    const pts = Math.floor(bill.grandTotal / 50);
+    const pts = Math.floor(totalVal / 50);
     document.getElementById('rLoyaltyPts').textContent = `+${pts} pts earned`;
 
-    document.getElementById('receiptModal').classList.add('active');
+    const modal = document.getElementById('receiptModal');
+    if (modal) modal.classList.add('active');
 }
 
 // ----------------------------------------------------
