@@ -20,16 +20,33 @@ echo [2/3] Starting Supermarket Billing Server (Spring Boot + Embedded Database)
 echo       Starting on http://localhost:8085
 echo.
 
-REM Automatically open browser after 4 seconds
-start "" cmd /c "timeout /t 4 /nobreak >nul & start http://localhost:8085"
+REM Automatically open browser after 5 seconds
+start "" cmd /c "timeout /t 5 /nobreak >nul & start http://localhost:8085"
 
-REM Check if target jar exists, else run via maven
+REM Check if pre-packaged JAR exists
 if exist "target\supermarket-billing-system-1.0.0.jar" (
-    echo [3/3] Running packaged JAR...
+    echo [3/3] Running pre-built executable JAR...
     java -jar target\supermarket-billing-system-1.0.0.jar
-) else (
-    echo [3/3] Running via Maven plugin...
-    call mvn spring-boot:run
+    pause
+    exit /b
 )
 
+REM Check if system Maven exists
+where mvn >nul 2>&1
+if %errorlevel% equ 0 (
+    echo [3/3] Running via System Maven...
+    call mvn spring-boot:run
+    pause
+    exit /b
+)
+
+REM Fallback to Maven Wrapper (no installation required)
+if exist "mvnw.cmd" (
+    echo [3/3] Running via Maven Wrapper (auto-downloading dependencies)...
+    call mvnw.cmd spring-boot:run
+    pause
+    exit /b
+)
+
+echo [ERROR] Could not find Maven or Maven Wrapper to start the project.
 pause
